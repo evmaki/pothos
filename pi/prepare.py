@@ -2,6 +2,7 @@
 import requests
 from datetime import datetime, timedelta
 from os import listdir, path, makedirs, rename, popen
+import logging
 
 from PIL import Image, ImageStat, UnidentifiedImageError, ImageEnhance
 
@@ -10,8 +11,10 @@ import settings
 
 abs_path = path.abspath(path.dirname(__file__))
 
-upload_url = settings.UPLOAD_URL
+api_url = settings.API_URL
 upload_password = settings.UPLOAD_PASSWORD
+
+logging.basicConfig(level=logging.INFO)
 
 def move_image(input_path, output_dir):
     output_dir = f'{abs_path}/frames/{output_dir}'
@@ -22,6 +25,15 @@ def move_image(input_path, output_dir):
 
     fn = input_path.split('/')[-1]
     rename(input_path, f'{output_dir}/{fn}')
+
+def upload(input_path, route):
+    f = open(f'{input_path}', 'rb')
+    upload_response = requests.post(f'{api_url}/{route}', files={'file': f}, data={'password': upload_password})
+
+    if upload_response.status_code != 200:
+        logging.info(f'upload failed with status code {upload_response.status_code}')
+    else:
+        logging.info(f'uploaded {input_path}')
 
 def prepare_image(input_path, output_dir):
     # try to open the image, and catch the exception if the image file is corrupt
@@ -51,10 +63,12 @@ def prepare_image(input_path, output_dir):
 
                 im_out = im_crop.convert('RGB', color_transform)
 
-                fn = input_path.split('/')[-1]
-                im_out.save(f'{output_dir}/{fn}')
+                output_path = f'{output_dir}/{input_path.split("/")[-1]}'
+                im_out.save(output_path)
 
-                print(f'saved image {output_dir}/{fn}')
+                logging.info(f'saved image {output_path}')
+                
+                upload(output_path, 'frames')
 
     except UnidentifiedImageError:
         move_image(input_path, 'archive')
@@ -93,24 +107,26 @@ def prepare_frames():
 
     frame1 = frames[0].split('.')[0]
     framen = frames[-1].split('.')[0]
-
     output_fn = f'{frame1},{framen}'
 
+    output_path = f'{output_dir}/{output_fn}.mp4'
+
     # generate the video if it doesn't exist
-    if not path.exists(f'{output_dir}/{output_fn}.mp4'):
+    if not path.exists(output_path):
         ffmpeg_stream = popen(f'{ffmpeg_path} -framerate 20 -pattern_type glob -i \'{output_dir}/*.jpg\' -c:v libx264 -pix_fmt yuv420p {output_dir}/{output_fn}.mp4')
         ffmpeg_stream.read()
-        print(f'saved {output_dir}/{output_fn}.mp4')
+        logging.info(f'saved {output_path}')
     else:
-        print(f'output video {output_dir}/{output_fn}.mp4 exists already.')
+        logging.info(f'output video {output_path} exists already.')
 
     # upload the video
-    f = open(f'{output_dir}/{output_fn}.mp4', 'rb')
-    upload_response = requests.post(upload_url, files={'file': f}, data={'password': upload_password})
+    upload(output_path, 'videos')
+
+def upload_all_prepared():
+    input_dir = f'{abs_path}/frames/prepared'
+    prepared_frames = [f for f in listdir(input_dir) if '.jpg' in f]
     
-    if upload_response.status_code != 200:
-        print(f'upload failed with status code {upload_response.status_code}')
-    else:
-        print('uploaded video')
+    for frame in prepared_frames:
+        upload(f'{input_dir}/{frame}', 'frames')
 
 prepare_frames()
