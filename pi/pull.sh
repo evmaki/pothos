@@ -1,1 +1,0 @@
-scp -r docent@192.168.1.67:~/pothos/frames .
