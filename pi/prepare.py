@@ -2,7 +2,8 @@
 import requests
 from datetime import datetime, timedelta
 from os import listdir, path, makedirs, rename, popen
-import logging
+from shutil import copyfile, rmtree
+import logging, json
 
 from PIL import Image, ImageStat, UnidentifiedImageError, ImageEnhance
 
@@ -16,7 +17,7 @@ upload_password = settings.UPLOAD_PASSWORD
 
 logging.basicConfig(level=logging.INFO)
 
-def move_image(input_path, output_dir):
+def move_image(input_path, output_dir, copy=False):
     output_dir = f'{abs_path}/frames/{output_dir}'
 
     # create the archive directory if it doesn't exist
@@ -24,11 +25,15 @@ def move_image(input_path, output_dir):
         makedirs(output_dir)
 
     fn = input_path.split('/')[-1]
-    rename(input_path, f'{output_dir}/{fn}')
+
+    if copy:    # copy the file
+        copyfile(input_path, f'{output_dir}/{fn}')
+    else:       # move the file
+        rename(input_path, f'{output_dir}/{fn}')
 
 def upload(input_path, route):
     f = open(f'{input_path}', 'rb')
-    upload_response = requests.post(f'{api_url}/{route}', files={'file': f}, data={'password': upload_password})
+    upload_response = requests.post(f'{api_url}/add/{route}', files={'file': f}, data={'password': upload_password})
 
     if upload_response.status_code != 200:
         logging.info(f'upload failed with status code {upload_response.status_code}')
@@ -68,17 +73,44 @@ def prepare_image(input_path, output_dir):
 
                 logging.info(f'saved image {output_path}')
                 
-                upload(output_path, 'frames')
+                upload(output_path, 'frame')
 
     except UnidentifiedImageError:
         move_image(input_path, 'archive')
 
-def prepare_frames():
-    input_dir = f'{abs_path}/frames'
-    output_dir = f'{input_dir}/prepared'
+def generate_video(frames, input_dir, output_dir, resolution=720):
+    """ Generates a video using ffmpeg by moving the frames in "frames" into a temp folder,
+    compiling them into the video, removing the temp dir, and returning a path to the created video.
+    """
+    if not path.exists(output_dir):
+        makedirs(output_dir)
+
+    for frame in frames:
+        move_image(f'{input_dir}/{frame}', 'tmp', copy=True)
+
+    output_fn = f'{frames[0].split(".")[0]},{frames[-1].split(".")[0]}.mp4'
+    output_path = f'{abs_path}/{output_dir}/{output_fn}'
 
     # find out where ffmpeg is installed in the current environment (assumes which is in /usr/bin)
     ffmpeg_path = popen(f'/usr/bin/which ffmpeg').read()[:-1]  # grab the path and drop the trailing newline
+
+    tmp_frames_dir = f'{abs_path}/frames/tmp'
+
+    # generate the video if it doesn't exist
+    if not path.exists(output_path):
+        ffmpeg_stream = popen(f'{ffmpeg_path} -framerate 20 -pattern_type glob -i \'{tmp_frames_dir}/*.jpg\' -c:v libx264 -vf scale={resolution}:-2,setsar=1:1 -pix_fmt yuv420p {output_path}')
+        ffmpeg_stream.read()
+        logging.info(f'saved {output_path}')
+        rmtree(tmp_frames_dir)
+        return output_path
+    else:
+        logging.info(f'output video {output_path} exists already.')
+        rmtree(tmp_frames_dir)
+        return -1
+
+def prepare_frames():
+    input_dir = f'{abs_path}/frames'
+    output_dir = f'{input_dir}/prepared'
 
     if not path.exists(output_dir):
         makedirs(output_dir)
@@ -105,28 +137,21 @@ def prepare_frames():
         if frame not in prepared_frames:
             prepare_image(f'{input_dir}/{frame}', output_dir)
 
-    frame1 = frames[0].split('.')[0]
-    framen = frames[-1].split('.')[0]
-    output_fn = f'{frame1},{framen}'
+    # generate a vid from the last week of frames
+    vid_path = generate_video(frames, 'frames/prepared', 'frames/prepared')
 
-    output_path = f'{output_dir}/{output_fn}.mp4'
-
-    # generate the video if it doesn't exist
-    if not path.exists(output_path):
-        ffmpeg_stream = popen(f'{ffmpeg_path} -framerate 20 -pattern_type glob -i \'{output_dir}/*.jpg\' -c:v libx264 -pix_fmt yuv420p {output_dir}/{output_fn}.mp4')
-        ffmpeg_stream.read()
-        logging.info(f'saved {output_path}')
-    else:
-        logging.info(f'output video {output_path} exists already.')
-
+    if vid_path != -1:
     # upload the video
-    upload(output_path, 'videos')
+        upload(vid_path, 'video')
+    
+    # upload the sensor data
+    upload(f'{abs_path}/data.json', 'data')
 
 def upload_all_prepared():
     input_dir = f'{abs_path}/frames/prepared'
     prepared_frames = [f for f in listdir(input_dir) if '.jpg' in f]
     
     for frame in prepared_frames:
-        upload(f'{input_dir}/{frame}', 'frames')
+        upload(f'{input_dir}/{frame}', 'frame')
 
 prepare_frames()
