@@ -86,7 +86,7 @@ def generate_video(frames, input_dir, output_dir, resolution=720):
         makedirs(output_dir)
 
     for frame in frames:
-        move_image(f'{input_dir}/{frame}', 'tmp', copy=True)
+        move_image(f'{abs_path}/{input_dir}/{frame}', 'tmp', copy=True)
 
     output_fn = f'{frames[0].split(".")[0]},{frames[-1].split(".")[0]}.mp4'
     output_path = f'{abs_path}/{output_dir}/{output_fn}'
