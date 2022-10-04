@@ -8,3 +8,5 @@ notes.md
 app.py
 settings.py
 pull.sh
+plot.py
+data.json
